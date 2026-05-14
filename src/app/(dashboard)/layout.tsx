@@ -11,7 +11,7 @@ export default async function DashboardLayout({
 }) {
   const role = await getUserRole();
 
-  if (!role) redirect("/auth/login");
+  if (!role) redirect("/login");
 
   const roleLabel: Record<string, string> = {
     admin: "Admin",

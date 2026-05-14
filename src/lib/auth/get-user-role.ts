@@ -1,4 +1,4 @@
-import { createClient } from "@/src/utils/supabase/server";
+import { createClient } from "@/lib/supabase/server";
 
 export type Role = "admin" | "dm" | "pm" | "msr";
 
