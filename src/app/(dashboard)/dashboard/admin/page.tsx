@@ -1,8 +1,10 @@
 import { redirect } from "next/navigation";
+import Link from "next/link";
 
 import { createClient } from "@/lib/supabase/server";
 import { InfoIcon } from "lucide-react";
 import { Suspense } from "react";
+import { Button } from "@/components/ui/button";
 
 async function UserDetails() {
   const supabase = await createClient();
@@ -24,6 +26,15 @@ export default function AdminDashboard() {
           This is a protected page that you can only see as an authenticated
           admin user
         </div>
+      </div>
+      <div className="flex flex-col gap-3 items-start">
+        <h2 className="font-bold text-2xl mb-2">Admin tools</h2>
+        <Button asChild variant="outline">
+          <Link href="/dashboard/admin/cycles">Manage cycles</Link>
+        </Button>
+        <Button asChild variant="outline">
+          <Link href="/dashboard/admin/hcps">Import HCP Panel</Link>
+        </Button>
       </div>
       <div className="flex flex-col gap-2 items-start">
         <h2 className="font-bold text-2xl mb-4">Your user details</h2>
