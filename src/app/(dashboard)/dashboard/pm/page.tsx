@@ -1,8 +1,10 @@
 import { redirect } from "next/navigation";
+import Link from "next/link";
 
 import { createClient } from "@/lib/supabase/server";
 import { InfoIcon } from "lucide-react";
 import { Suspense } from "react";
+import { Button } from "@/components/ui/button";
 
 async function UserDetails() {
   const supabase = await createClient();
@@ -24,6 +26,12 @@ export default function PmDashboard() {
           This is a protected page that you can only see as an authenticated
           Product Manager user
         </div>
+      </div>
+      <div className="flex flex-col gap-3 items-start">
+        <h2 className="font-bold text-2xl mb-2">PM tools</h2>
+        <Button asChild variant="outline">
+          <Link href="/dashboard/pm/campaigns">Manage campaigns</Link>
+        </Button>
       </div>
       <div className="flex flex-col gap-2 items-start">
         <h2 className="font-bold text-2xl mb-4">Your user details</h2>
