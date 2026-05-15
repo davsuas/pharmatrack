@@ -65,14 +65,28 @@ export function ImportForm({ productLines }: { productLines: ProductLine[] }) {
         {state?.result && (
           <div className="flex flex-col gap-3 pt-2 border-t">
             <h3 className="font-semibold text-sm">Import result</h3>
-            <div className="flex gap-3">
+            <div className="flex gap-3 flex-wrap">
               <Badge variant="default">{state.result.geocoded} geocoded</Badge>
-              <Badge variant={state.result.failed.length > 0 ? "destructive" : "secondary"}>
-                {state.result.failed.length} failed
-              </Badge>
+              {state.result.warnings.length > 0 && (
+                <Badge variant="outline">{state.result.warnings.length} warnings</Badge>
+              )}
+              {state.result.failed.length > 0 && (
+                <Badge variant="destructive">{state.result.failed.length} failed</Badge>
+              )}
             </div>
+            {state.result.warnings.length > 0 && (
+              <div className="flex flex-col gap-1">
+                <p className="text-xs font-medium text-yellow-600">Warnings (imported without MSR assignment):</p>
+                {state.result.warnings.map((w) => (
+                  <p key={w.hcp_id} className="text-xs text-muted-foreground">
+                    <span className="font-mono">{w.hcp_id}</span> — {w.reason}
+                  </p>
+                ))}
+              </div>
+            )}
             {state.result.failed.length > 0 && (
               <div className="flex flex-col gap-1">
+                <p className="text-xs font-medium text-destructive">Failed rows:</p>
                 {state.result.failed.map((f) => (
                   <p key={f.hcp_id} className="text-xs text-muted-foreground">
                     <span className="font-mono">{f.hcp_id}</span> — {f.reason}

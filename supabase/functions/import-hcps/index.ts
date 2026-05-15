@@ -1,30 +1,49 @@
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
+import { parse as parseCSVText } from "https://deno.land/std@0.224.0/csv/parse.ts";
 import { parseCSVRow, isParseError } from "./parse.ts";
 
 interface ImportResult {
   geocoded: number;
   failed: { hcp_id: string; reason: string }[];
+  warnings: { hcp_id: string; reason: string }[];
 }
 
 function parseCSV(text: string): Record<string, string>[] {
-  const lines = text.trim().split("\n").filter(Boolean);
-  if (lines.length < 2) return [];
-  const headers = lines[0].split(",").map((h) => h.trim());
-  return lines.slice(1).map((line) => {
-    const values = line.split(",").map((v) => v.trim());
-    return Object.fromEntries(headers.map((h, i) => [h, values[i] ?? ""]));
-  });
+  // skipFirstRow uses the header row as object keys; handles quoted fields with commas
+  return parseCSVText(text.trim(), { skipFirstRow: true }) as Record<string, string>[];
 }
 
-async function geocode(
-  address: string,
-  apiKey: string
-): Promise<{ lat: number; lng: number } | null> {
+interface GeocodeResult {
+  coords: { lat: number; lng: number } | null;
+  error: string | null;
+}
+
+async function geocode(address: string, apiKey: string): Promise<GeocodeResult> {
+  if (!apiKey) {
+    return { coords: null, error: "GOOGLE_MAPS_API_KEY env var not set" };
+  }
+
   const url = `https://maps.googleapis.com/maps/api/geocode/json?address=${encodeURIComponent(address)}&key=${apiKey}`;
-  const res = await fetch(url);
-  const json = await res.json();
-  if (json.status !== "OK" || !json.results?.[0]) return null;
-  return json.results[0].geometry.location;
+
+  let json: { status: string; error_message?: string; results?: { geometry: { location: { lat: number; lng: number } } }[] };
+  try {
+    const res = await fetch(url);
+    json = await res.json();
+  } catch (err) {
+    return { coords: null, error: `geocode fetch failed: ${err}` };
+  }
+
+  if (json.status !== "OK") {
+    // Google returns status codes like REQUEST_DENIED, INVALID_REQUEST, ZERO_RESULTS, etc.
+    const detail = json.error_message ? ` — ${json.error_message}` : "";
+    return { coords: null, error: `geocode status ${json.status}${detail}` };
+  }
+
+  if (!json.results?.[0]) {
+    return { coords: null, error: "geocode returned no results" };
+  }
+
+  return { coords: json.results[0].geometry.location, error: null };
 }
 
 Deno.serve(async (req) => {
@@ -46,8 +65,11 @@ Deno.serve(async (req) => {
   );
 
   const apiKey = Deno.env.get("GOOGLE_MAPS_API_KEY") ?? "";
+  console.log(`GOOGLE_MAPS_API_KEY present: ${!!apiKey}`);
+
   const rawRows = parseCSV(csvText);
-  const result: ImportResult = { geocoded: 0, failed: [] };
+  console.log(`Parsed ${rawRows.length} rows from CSV`);
+  const result: ImportResult = { geocoded: 0, failed: [], warnings: [] };
 
   for (const raw of rawRows) {
     const parsed = parseCSVRow(raw);
@@ -57,26 +79,40 @@ Deno.serve(async (req) => {
       continue;
     }
 
-    const coords = await geocode(parsed.address, apiKey);
+    const { coords, error: geocodeError } = await geocode(parsed.address, apiKey);
+    console.log(`Geocode [${parsed.hcp_id}] "${parsed.address}": ${geocodeError ?? "OK"}`);
 
     if (!coords) {
-      result.failed.push({ hcp_id: parsed.hcp_id, reason: "geocoding failed" });
+      result.failed.push({ hcp_id: parsed.hcp_id, reason: geocodeError ?? "geocoding failed" });
       continue;
     }
 
-    const { error: upsertError } = await supabase.from("hcps").upsert(
-      {
+    const hcpPayload = {
+      hcp_id: parsed.hcp_id,
+      name: parsed.name,
+      specialty: parsed.specialty,
+      address: parsed.address,
+      msr_id: parsed.msr_id || null,
+      lat: coords.lat,
+      lng: coords.lng,
+      geocoded_at: new Date().toISOString(),
+    };
+
+    let { error: upsertError } = await supabase
+      .from("hcps")
+      .upsert(hcpPayload, { onConflict: "hcp_id" });
+
+    // msr_id references a user that doesn't exist yet — import without assignment
+    if (upsertError?.message.includes("hcps_msr_id_fkey")) {
+      result.warnings.push({
         hcp_id: parsed.hcp_id,
-        name: parsed.name,
-        specialty: parsed.specialty,
-        address: parsed.address,
-        msr_id: parsed.msr_id || null,
-        lat: coords.lat,
-        lng: coords.lng,
-        geocoded_at: new Date().toISOString(),
-      },
-      { onConflict: "hcp_id" }
-    );
+        reason: `msr_id ${parsed.msr_id} not found in auth.users — imported without MSR assignment`,
+      });
+      const retry = await supabase
+        .from("hcps")
+        .upsert({ ...hcpPayload, msr_id: null }, { onConflict: "hcp_id" });
+      upsertError = retry.error;
+    }
 
     if (upsertError) {
       result.failed.push({ hcp_id: parsed.hcp_id, reason: upsertError.message });
