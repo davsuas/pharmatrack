@@ -5,6 +5,7 @@ import { createClient } from "@/lib/supabase/server";
 import { InfoIcon } from "lucide-react";
 import { Suspense } from "react";
 import { Button } from "@/components/ui/button";
+import { InstallPrompt } from "@/components/install-prompt";
 
 async function UserDetails() {
   const supabase = await createClient();
@@ -27,6 +28,8 @@ export default function MsrDashboard() {
           Medical Sales Representative user
         </div>
       </div>
+      <InstallPrompt />
+
       <div className="flex flex-col gap-3 items-start">
         <h2 className="font-bold text-2xl mb-2">MSR tools</h2>
         <Button asChild variant="outline">

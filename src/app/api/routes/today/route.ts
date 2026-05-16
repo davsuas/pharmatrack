@@ -38,7 +38,7 @@ export async function GET() {
 
   const { data: stopRows } = await supabase
     .from("route_stops")
-    .select("position, hcp_id, hcps(name, specialty, address)")
+    .select("position, hcp_id, hcps(name, specialty, address, lat, lng)")
     .eq("route_id", route.id)
     .order("position");
 
@@ -63,5 +63,10 @@ export async function GET() {
     };
   });
 
-  return NextResponse.json({ routeId: route.id, status: route.status, stops });
+  const geofenceStops = (stopRows ?? []).map((s) => {
+    const hcp = Array.isArray(s.hcps) ? s.hcps[0] : s.hcps;
+    return { hcpId: s.hcp_id, lat: hcp?.lat ?? 0, lng: hcp?.lng ?? 0 };
+  });
+
+  return NextResponse.json({ routeId: route.id, status: route.status, stops, geofenceStops });
 }
