@@ -21,23 +21,35 @@ async function fetchDistanceMatrix(
     return matrix;
   }
 
-  const destinations = hcps.map((h) => `${h.lat},${h.lng}`).join("|");
-  const originStr = `${origin.lat},${origin.lng}`;
-  const allPoints = [originStr, ...hcps.map((h) => `${h.lat},${h.lng}`)];
-  const pointsStr = allPoints.join("|");
+  // Two requests to stay within the 100-element API limit (origins × destinations):
+  //   request 1 — MSR → HCPs : 1 × N
+  //   request 2 — HCPs → HCPs: N × N  (caller must ensure N ≤ 10)
+  // TODO: support N > 10 by batching origins in groups of floor(100/N).
+  const base = "https://maps.googleapis.com/maps/api/distancematrix/json";
+  const hcpPoints = encodeURIComponent(hcps.map((h) => `${h.lat},${h.lng}`).join("|"));
 
-  const url = `https://maps.googleapis.com/maps/api/distancematrix/json?origins=${encodeURIComponent(pointsStr)}&destinations=${encodeURIComponent(pointsStr)}&mode=driving&key=${apiKey}`;
-  const res = await fetch(url);
-  const json = await res.json();
+  const [r1, r2] = await Promise.all([
+    fetch(`${base}?origins=${encodeURIComponent(`${origin.lat},${origin.lng}`)}&destinations=${hcpPoints}&mode=driving&key=${apiKey}`),
+    fetch(`${base}?origins=${hcpPoints}&destinations=${hcpPoints}&mode=driving&key=${apiKey}`),
+  ]);
+  const [j1, j2] = await Promise.all([r1.json(), r2.json()]);
 
-  const ids = ["msr", ...hcps.map((h) => h.hcpId)];
-  for (let i = 0; i < ids.length; i++) {
-    matrix[ids[i]] = {};
-    for (let j = 0; j < ids.length; j++) {
-      const el = json.rows?.[i]?.elements?.[j];
-      matrix[ids[i]][ids[j]] = el?.status === "OK" ? el.duration.value / 60 : 999;
-    }
-  }
+  if (j1.status !== "OK") console.error("[DistanceMatrix] msr→hcps error:", j1.status, j1.error_message ?? "");
+  if (j2.status !== "OK") console.error("[DistanceMatrix] hcps→hcps error:", j2.status, j2.error_message ?? "");
+
+  matrix["msr"] = {};
+  hcps.forEach((h, j) => {
+    const el = j1.rows?.[0]?.elements?.[j];
+    matrix["msr"][h.hcpId] = el?.status === "OK" ? el.duration.value / 60 : 999;
+  });
+
+  hcps.forEach((fromH, i) => {
+    matrix[fromH.hcpId] = {};
+    hcps.forEach((toH, j) => {
+      const el = j2.rows?.[i]?.elements?.[j];
+      matrix[fromH.hcpId][toH.hcpId] = el?.status === "OK" ? el.duration.value / 60 : 999;
+    });
+  });
 
   return matrix;
 }
@@ -126,10 +138,20 @@ export async function POST(req: Request) {
     }
   }
 
-  const apiKey = process.env.GOOGLE_MAPS_API_KEY ?? "";
-  const distanceMatrix = await fetchDistanceMatrix(msrPosition, hcps, apiKey);
+  // Cap to 10 HCPs closest to MSR so the matrix stays within 10×10 = 100 elements.
+  // TODO: remove cap once fetchDistanceMatrix batches requests for N > 10.
+  const MAX_MATRIX_SIZE = 10;
+  const candidateHCPs = [...hcps]
+    .sort((a, b) =>
+      Math.hypot(a.lat - msrPosition.lat, a.lng - msrPosition.lng) -
+      Math.hypot(b.lat - msrPosition.lat, b.lng - msrPosition.lng)
+    )
+    .slice(0, MAX_MATRIX_SIZE);
 
-  const stops = suggestRoute({ hcps, callCountsThisCycle, maxCallsPerHCP, distanceMatrix, msrPosition });
+  const apiKey = process.env.GOOGLE_MAPS_API_KEY ?? "";
+  const distanceMatrix = await fetchDistanceMatrix(msrPosition, candidateHCPs, apiKey);
+
+  const stops = suggestRoute({ hcps: candidateHCPs, callCountsThisCycle, maxCallsPerHCP, distanceMatrix, msrPosition });
 
   // Save as suggested route
   const { data: route } = await supabase
