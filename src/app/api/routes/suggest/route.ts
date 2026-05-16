@@ -95,33 +95,49 @@ export async function POST(req: Request) {
     lng: h.lng,
   }));
 
-  // Fetch tier assignments for MSR's HCPs to get tier and max calls
+  // Fetch tier assignments — simple select, no embed (hcp_tier_assignments has no FK to promotional_grids)
   const hcpIds = hcps.map((h) => h.hcpId);
   const { data: tierRows } = await supabase
     .from("hcp_tier_assignments")
-    .select("hcp_id, tier, promotional_grids(calls_per_cycle)")
+    .select("hcp_id, tier, product_line_id")
     .in("hcp_id", hcpIds);
 
-  // Build maxCallsPerHCP and populate tier on each HCP
-  const maxCallsPerHCP: Record<string, number> = {};
   const tierMap: Record<string, 1 | 2 | 3> = {};
-  for (const row of tierRows ?? []) {
-    tierMap[row.hcp_id] = row.tier as 1 | 2 | 3;
-    const grids = Array.isArray(row.promotional_grids) ? row.promotional_grids : [row.promotional_grids];
-    for (const g of grids) {
-      if (g?.calls_per_cycle) {
-        maxCallsPerHCP[row.hcp_id] = Math.max(maxCallsPerHCP[row.hcp_id] ?? 0, g.calls_per_cycle);
-      }
-    }
-  }
+  for (const row of tierRows ?? []) tierMap[row.hcp_id] = row.tier as 1 | 2 | 3;
   hcps.forEach((h) => { if (tierMap[h.hcpId]) h.tier = tierMap[h.hcpId]; });
 
-  // Fetch call counts for this cycle
+  // Fetch active cycle + campaign to resolve calls_per_cycle from promotional_grids
   const { data: activeCycle } = await supabase
     .from("cycles")
     .select("id, start_date, end_date")
     .eq("status", "active")
     .single();
+
+  const maxCallsPerHCP: Record<string, number> = {};
+  if (activeCycle) {
+    const { data: activeCampaign } = await supabase
+      .from("campaigns")
+      .select("id")
+      .eq("cycle_id", activeCycle.id)
+      .eq("status", "active")
+      .maybeSingle();
+
+    if (activeCampaign) {
+      const { data: gridRows } = await supabase
+        .from("promotional_grids")
+        .select("product_line_id, tier, calls_per_cycle")
+        .eq("campaign_id", activeCampaign.id);
+
+      // grid lookup: "productLineId:tier" → calls_per_cycle
+      const gridLookup: Record<string, number> = {};
+      for (const g of gridRows ?? []) gridLookup[`${g.product_line_id}:${g.tier}`] = g.calls_per_cycle;
+
+      for (const ta of tierRows ?? []) {
+        const calls = gridLookup[`${ta.product_line_id}:${ta.tier}`];
+        if (calls) maxCallsPerHCP[ta.hcp_id] = Math.max(maxCallsPerHCP[ta.hcp_id] ?? 0, calls);
+      }
+    }
+  }
 
   const callCountsThisCycle: Record<string, number> = {};
   if (activeCycle) {
