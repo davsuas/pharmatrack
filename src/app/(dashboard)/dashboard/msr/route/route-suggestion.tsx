@@ -53,11 +53,24 @@ function RouteMap({ stops }: { stops: RouteStop[] }) {
 export function RouteSuggestion({ mapsApiKey }: { mapsApiKey: string }) {
   const [stops, setStops] = useState<RouteStop[]>([]);
   const [routeId, setRouteId] = useState<string | null>(null);
-  const [loading, setLoading] = useState(false);
+  const [loading, setLoading] = useState(true);
   const [approving, setApproving] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [approved, setApproved] = useState(false);
   const [mapsReady, setMapsReady] = useState(false);
+
+  useEffect(() => {
+    fetch("/api/routes/today")
+      .then((r) => r.json())
+      .then((data) => {
+        if (data?.stops?.length) {
+          setStops(data.stops);
+          setRouteId(data.routeId);
+          setApproved(data.status === "approved");
+        }
+      })
+      .finally(() => setLoading(false));
+  }, []);
 
   async function requestRoute() {
     setLoading(true);
@@ -103,8 +116,8 @@ export function RouteSuggestion({ mapsApiKey }: { mapsApiKey: string }) {
         onLoad={() => setMapsReady(true)}
       />
       <div className="flex gap-3 items-center">
-        <Button onClick={requestRoute} disabled={loading}>
-          {loading ? "Calculating…" : "Suggest today's route"}
+        <Button onClick={requestRoute} disabled={loading || approved}>
+          {loading ? "Loading…" : "Suggest today's route"}
         </Button>
         {stops.length > 0 && !approved && (
           <Button variant="outline" onClick={approveRoute} disabled={approving}>
