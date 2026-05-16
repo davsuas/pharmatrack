@@ -13,16 +13,26 @@ export async function GET() {
 
   const today = new Date().toISOString().split("T")[0];
 
-  // Prefer approved over suggested ('approved' < 'suggested' alphabetically)
-  const { data: route } = await supabase
+  // Postgres enum order: suggested=0, approved=1 — can't rely on ORDER BY.
+  // Explicitly prefer approved, fall back to suggested.
+  const { data: approved } = await supabase
     .from("routes")
     .select("id, status")
     .eq("msr_id", user.id)
     .eq("date", today)
-    .in("status", ["suggested", "approved"])
-    .order("status", { ascending: true })
-    .limit(1)
+    .eq("status", "approved")
     .maybeSingle();
+
+  const route = approved ?? await (async () => {
+    const { data } = await supabase
+      .from("routes")
+      .select("id, status")
+      .eq("msr_id", user.id)
+      .eq("date", today)
+      .eq("status", "suggested")
+      .maybeSingle();
+    return data;
+  })();
 
   if (!route) return NextResponse.json(null);
 
